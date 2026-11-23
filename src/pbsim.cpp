@@ -1081,7 +1081,7 @@ int get_genome_seq() {
     if ((i < genome.len ) && (genome.seq[i-1] == genome.seq[i])) {
       nend = i;
       nnum ++;
-      if (nnum > 11) {
+      if (nnum > 10) {
         nnum = 10;
       }
     } else {
@@ -2781,7 +2781,7 @@ int simulate_by_qshmm_trans() {
           if ((i < transcript.len) && (transcript.seq[i-1] == transcript.seq[i])) {
             nend = i;
             nnum ++;
-            if (nnum > 11) {
+            if (nnum > 10) {
               nnum = 10;
             }
           } else {
@@ -2853,7 +2853,7 @@ int simulate_by_qshmm_trans() {
         if ((i < transcript.len) && (transcript.seq[i-1] == transcript.seq[i])) {
           nend = i;
           nnum ++;
-          if (nnum > 11) {
+          if (nnum > 10) {
             nnum = 10;
           }
         } else {
@@ -3335,7 +3335,7 @@ int simulate_by_qshmm_templ() {
           if ((i < templ.len) && (templ.seq[i-1] == templ.seq[i])) {
             nend = i;
             nnum ++;
-            if (nnum > 11) {
+            if (nnum > 10) {
               nnum = 10;
             }
           } else {
@@ -3406,7 +3406,7 @@ int simulate_by_qshmm_templ() {
         if ((i < templ.len) && (templ.seq[i-1] == templ.seq[i])) {
           nend = i;
           nnum ++;
-          if (nnum > 11) {
+          if (nnum > 10) {
             nnum = 10;
           }
         } else {
@@ -4492,7 +4492,7 @@ int simulate_by_errhmm_trans() {
           if ((i < transcript.len) && (transcript.seq[i-1] == transcript.seq[i])) {
             nend = i;
             nnum ++;
-            if (nnum > 11) {
+            if (nnum > 10) {
               nnum = 10;
             }
           } else {
@@ -4564,7 +4564,7 @@ int simulate_by_errhmm_trans() {
         if ((i < transcript.len) && (transcript.seq[i-1] == transcript.seq[i])) {
           nend = i;
           nnum ++;
-          if (nnum > 11) {
+          if (nnum > 10) {
             nnum = 10;
           }
         } else {
@@ -5098,7 +5098,7 @@ int simulate_by_errhmm_templ() {
           if ((i < templ.len) && (templ.seq[i-1] == templ.seq[i])) {
             nend = i;
             nnum ++;
-            if (nnum > 11) {
+            if (nnum > 10) {
               nnum = 10;
             }
           } else {
@@ -5169,7 +5169,7 @@ int simulate_by_errhmm_templ() {
         if ((i < templ.len) && (templ.seq[i-1] == templ.seq[i])) {
           nend = i;
           nnum ++;
-          if (nnum > 11) {
+          if (nnum > 10) {
             nnum = 10;
           }
         } else {
