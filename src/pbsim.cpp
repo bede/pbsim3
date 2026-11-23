@@ -55,6 +55,8 @@ struct sim_t {
   unsigned int seed;
   double depth;
   double accuracy_mean, accuracy_max, accuracy_min;
+  double qscore_mean, qscore_sd, qscore_min;
+  int qscore_fastq;
   long len_min, len_max; 
   double len_mean, len_sd; 
   long long len_quota;
@@ -278,6 +280,10 @@ int main (int argc, char** argv) {
     {"pass-num", 1, NULL, 0},
     {"template", 1, NULL, 0},
     {"hp-del-bias", 1, NULL, 0},
+    {"qscore-mean", 1, NULL, 0},
+    {"qscore-sd", 1, NULL, 0},
+    {"qscore-min", 1, NULL, 0},
+    {"qscore-fastq", 1, NULL, 0},
     {0, 0, 0, 0}
   };
 
@@ -514,6 +520,38 @@ int main (int argc, char** argv) {
         sim.hp_del_bias = atof(optarg);
         if ((sim.hp_del_bias < 1) || (sim.hp_del_bias > 10)) {
           fprintf(stderr, "ERROR (hp-del-bias: %s): Acceptable range is 1-10.\n", optarg);
+          exit(-1);
+        }
+        break;
+
+      case 23:
+        sim.qscore_mean = atof(optarg);
+        if ((sim.qscore_mean <= 0.0) || (sim.qscore_mean > 60.0)) {
+          fprintf(stderr, "ERROR (qscore-mean: %s): Acceptable range is 0-60.\n", optarg);
+          exit(-1);
+        }
+        break;
+
+      case 24:
+        sim.qscore_sd = atof(optarg);
+        if ((sim.qscore_sd < 0.0) || (sim.qscore_sd > 20.0)) {
+          fprintf(stderr, "ERROR (qscore-sd: %s): Acceptable range is 0-20.\n", optarg);
+          exit(-1);
+        }
+        break;
+
+      case 25:
+        sim.qscore_min = atof(optarg);
+        if ((sim.qscore_min < 0.0) || (sim.qscore_min > 60.0)) {
+          fprintf(stderr, "ERROR (qscore-min: %s): Acceptable range is 0-60.\n", optarg);
+          exit(-1);
+        }
+        break;
+
+      case 26:
+        sim.qscore_fastq = atoi(optarg);
+        if ((sim.qscore_fastq < 0) || (sim.qscore_fastq > 93)) {
+          fprintf(stderr, "ERROR (qscore-fastq: %s): Acceptable range is 0-93.\n", optarg);
           exit(-1);
         }
         break;
@@ -1682,6 +1720,35 @@ int set_sim_param() {
   // hp-del-bias
   if (!(sim.set_flg[22])) {
     sim.hp_del_bias = 1;
+  }
+
+  // qscore-mean, qscore-sd, qscore-min, qscore-fastq
+  if (sim.set_flg[23] || sim.set_flg[24] || sim.set_flg[25] || sim.set_flg[26]) {
+    if (!sim.set_flg[23]) {
+      fprintf(stderr, "ERROR: --qscore-sd, --qscore-min and --qscore-fastq require --qscore-mean.\n");
+      return FAILED;
+    }
+    if ((sim.method != METHOD_ERR) || (sim.strategy != STRATEGY_WGS)) {
+      fprintf(stderr, "ERROR: --qscore-mean is only supported with --strategy wgs --method errhmm.\n");
+      return FAILED;
+    }
+    if (sim.set_flg[19]) {
+      fprintf(stderr, "ERROR: --qscore-mean and --accuracy-mean cannot be used together.\n");
+      return FAILED;
+    }
+    if (!sim.set_flg[24]) {
+      sim.qscore_sd = 3.0;
+    }
+    if (!sim.set_flg[25]) {
+      sim.qscore_min = 9.0;
+    }
+    if (!sim.set_flg[26]) {
+      sim.qscore_fastq = 10;
+    }
+    if (sim.qscore_min > sim.qscore_mean + 3.0 * sim.qscore_sd) {
+      fprintf(stderr, "ERROR: --qscore-min is too high for --qscore-mean and --qscore-sd.\n");
+      return FAILED;
+    }
   }
 
   return SUCCEEDED;
@@ -3619,6 +3686,7 @@ int simulate_by_errhmm() {
   int acc_wk, accuracy_min, accuracy_max;
   int digit_num1[4], digit_num2[4], digit_num[4];
   int acc_tmp, rate_mag;
+  double read_q, read_acc, u1, u2, keep_err = 1.0;
   int qeval;
   long read_offset, ref_offset, maf_offset;
   int hp;
@@ -3703,6 +3771,17 @@ int simulate_by_errhmm() {
   if (accuracy_rand_value < 1) {
     fprintf(stderr, "ERROR: accuracy parameters are not appropriate.\n");
     return FAILED;
+  }
+
+  // qscore-mean: use all accuracy bins
+  if (sim.set_flg[23]) {
+    accuracy_min = errhmm.acc_min;
+    accuracy_max = errhmm.acc_max;
+    if (sim.qscore_min < -10.0 * log10(1.0 - errhmm.acc_min / 100.0)) {
+      fprintf(stderr, "ERROR: --qscore-min must be at least %.2f, the accuracy floor of the error model (%d%%).\n",
+        -10.0 * log10(1.0 - errhmm.acc_min / 100.0), errhmm.acc_min);
+      return FAILED;
+    }
   }
 
   // error distribution
@@ -3801,6 +3880,23 @@ int simulate_by_errhmm() {
 
     index = rand() % accuracy_rand_value + 1;
     mut.acc = prob2accuracy[index];
+    if (sim.set_flg[23]) {
+      // per-read Q from truncated normal; use nearest lower accuracy bin and thin errors to match
+      do {
+        u1 = (rand() + 1.0) / ((double)RAND_MAX + 2.0);
+        u2 = rand() / ((double)RAND_MAX + 1.0);
+        read_q = sim.qscore_mean + sim.qscore_sd * sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+      } while (read_q < sim.qscore_min);
+      read_acc = 1.0 - pow(10.0, -read_q / 10.0);
+      mut.acc = (int)floor(read_acc * 100);
+      if (mut.acc > errhmm.acc_max) {
+        mut.acc = errhmm.acc_max;
+      }
+      while (errhmm.exist_hmm[mut.acc] == 0) {
+        mut.acc --;
+      }
+      keep_err = (1.0 - read_acc) / (1.0 - mut.acc / 100.0);
+    }
     if (mut.len >= genome.len) {
       mut.offset = 0;
       mut.len = genome.len;
@@ -3868,6 +3964,9 @@ int simulate_by_errhmm() {
                 index = rand() % err_rand_value_emis[mut.acc][state] + 1;
                 index = emis2err[mut.acc][state][index];
               }
+            }
+            if (sim.set_flg[23] && (index != 0) && (rand() / ((double)RAND_MAX + 1.0) >= keep_err)) {
+              index = 0;
             }
           } else if (mut.acc < errhmm.acc_min) {
             if (read_offset == 0) {
@@ -4005,7 +4104,7 @@ int simulate_by_errhmm() {
       freq_accuracy[acc_wk] ++;
 
       for (i=0; i<len; i++) {
-        mut.new_qc[i] = '!';
+        mut.new_qc[i] = sim.set_flg[23] ? (char)(33 + sim.qscore_fastq) : '!';  // --qscore-fastq
       }
       mut.new_qc[len] = '\0';
 
@@ -5448,7 +5547,12 @@ void print_sim_param() {
 
   fprintf(stderr, "seed : %d\n", sim.seed);
 
-  if ((sim.method == METHOD_QS) || (sim.method == METHOD_ERR)) {
+  if ((sim.method == METHOD_ERR) && sim.set_flg[23]) {
+    fprintf(stderr, "qscore-mean : %f\n", sim.qscore_mean);
+    fprintf(stderr, "qscore-sd : %f\n", sim.qscore_sd);
+    fprintf(stderr, "qscore-min : %f\n", sim.qscore_min);
+    fprintf(stderr, "qscore-fastq : %d\n", sim.qscore_fastq);
+  } else if ((sim.method == METHOD_QS) || (sim.method == METHOD_ERR)) {
     fprintf(stderr, "accuracy-mean : %f\n", sim.accuracy_mean);
   } else {
     fprintf(stderr, "sample : %s\n", sample.file);
@@ -5788,6 +5892,13 @@ void print_help() {
   fprintf(stderr, "  --length-mean        mean length (9000.0).\n");
   fprintf(stderr, "  --length-sd          standard deviation of length (7000.0).\n");
   fprintf(stderr, "  --accuracy-mean      mean accuracy (0.85).\n");
+  fprintf(stderr, "  --qscore-mean        mean per-read Phred score, replacing --accuracy-mean\n");
+  fprintf(stderr, "                       (wgs only). Each read's accuracy is 1-10^(-Q/10), with Q\n");
+  fprintf(stderr, "                       drawn from a normal distribution.\n");
+  fprintf(stderr, "  --qscore-sd          standard deviation of per-read Phred score (3.0).\n");
+  fprintf(stderr, "  --qscore-min         minimum per-read Phred score; lower draws are redrawn\n");
+  fprintf(stderr, "                       (9.0, the MinKNOW pass threshold for HAC).\n");
+  fprintf(stderr, "  --qscore-fastq       Phred score written for every base in FASTQ output (10).\n");
   fprintf(stderr, "  --pass-num           number of sequencing passes (1).\n");
   fprintf(stderr, "\n");
   fprintf(stderr, " [options for sample-based method]\n\n");
